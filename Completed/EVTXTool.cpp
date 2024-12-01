@@ -63,7 +63,7 @@ uint32_t calculateCRC32(const uint8_t* data, size_t length) {
     return crc ^ 0xFFFFFFFF;
 }
 
-// Helper Function: Calculate maximum modifiable space
+// Function to calculate modifiable space with skip chunks
 size_t calculateMaxModifiableSpace(const std::string& inputPath, const std::vector<uint16_t>& skipChunks) {
     std::ifstream inputFile(inputPath, std::ios::binary);
     if (!inputFile) {
@@ -74,14 +74,13 @@ size_t calculateMaxModifiableSpace(const std::string& inputPath, const std::vect
     EVTXFileHeader fileHeader;
     inputFile.read(reinterpret_cast<char*>(&fileHeader), sizeof(fileHeader));
 
-    size_t modifiableSpace = sizeof(fileHeader.unknown2); // File header's unknown2 field
+    size_t modifiableSpace = sizeof(fileHeader.unknown2); // File header unknown2 field
 
-    // Per chunk modifiable fields
     size_t chunkModifiableSpace = sizeof(EVTXChunkHeader::unknown1) +
         sizeof(EVTXChunkHeader::commonStringOffsets) +
-        sizeof(EVTXChunkHeader::templatePointers);
+        sizeof(EVTXChunkHeader::templatePointers); // Chunk modifiable fields combined
 
-    for (uint16_t chunkIndex = 0; chunkIndex < fileHeader.numberOfChunks; ++chunkIndex) {
+    for (uint16_t chunkIndex = 0; chunkIndex < fileHeader.numberOfChunks; ++chunkIndex) { // Calculates based on number of chunks available
         if (std::find(skipChunks.begin(), skipChunks.end(), chunkIndex) == skipChunks.end()) {
             modifiableSpace += chunkModifiableSpace;
         }
@@ -91,26 +90,26 @@ size_t calculateMaxModifiableSpace(const std::string& inputPath, const std::vect
     return modifiableSpace;
 }
 
-// Helper Function: Write message to a field
+// Function to write message to a field in the headers
 size_t writeMessage(uint8_t* field, size_t fieldSize, const std::vector<uint8_t>& content, size_t contentOffset) {
     size_t bytesToWrite = std::min(fieldSize, content.size() - contentOffset);
     std::memcpy(field, content.data() + contentOffset, bytesToWrite);
     return bytesToWrite;
 }
 
-// Function to encode a secret message or file content
+// Function to encode content
 static void encodeContent(const std::string& inputPath, const std::string& outputPath, const std::vector<uint8_t>& content, const std::vector<uint16_t>& skipChunks) {
+    // Start pattern and termination pattern - takes up about 18 bytes of space
     const uint8_t terminationPattern[16] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF };
     const uint16_t startMarker = 0xFEED;
 
-    // Open the input file
+    // File operations for input and output files
     std::ifstream inputFile(inputPath, std::ios::binary);
     if (!inputFile) {
         std::cerr << "Error: Could not open the input file: " << inputPath << std::endl;
         return;
     }
 
-    // Open the output file
     std::ofstream outputFile(outputPath, std::ios::binary);
     if (!outputFile) {
         std::cerr << "Error: Could not create the output file: " << outputPath << std::endl;
@@ -118,40 +117,33 @@ static void encodeContent(const std::string& inputPath, const std::string& outpu
         return;
     }
 
-    // Read the file header
+    // File header
     EVTXFileHeader fileHeader;
     inputFile.read(reinterpret_cast<char*>(&fileHeader), sizeof(fileHeader));
 
-    // Prepare the content with skipped chunks, start marker, and termination pattern
     std::vector<uint8_t> contentToEncode;
 
-    // Add skipped chunks as 2-byte entries
+    // Skipped chunk numbers
     for (uint16_t chunk : skipChunks) {
         contentToEncode.push_back(static_cast<uint8_t>(chunk & 0xFF));
         contentToEncode.push_back(static_cast<uint8_t>((chunk >> 8) & 0xFF));
     }
-    contentToEncode.push_back(0xFF); // End of skipped chunks marker
+    contentToEncode.push_back(0xFF);
     contentToEncode.push_back(0xFF);
 
-    // Add the start marker
     contentToEncode.push_back(static_cast<uint8_t>(startMarker & 0xFF));
     contentToEncode.push_back(static_cast<uint8_t>((startMarker >> 8) & 0xFF));
 
-    // Add the actual content
-    contentToEncode.insert(contentToEncode.end(), content.begin(), content.end());
+    contentToEncode.insert(contentToEncode.end(), content.begin(), content.end()); // Encode content
 
-    // Add the termination pattern
-    contentToEncode.insert(contentToEncode.end(), std::begin(terminationPattern), std::end(terminationPattern));
+    contentToEncode.insert(contentToEncode.end(), std::begin(terminationPattern), std::end(terminationPattern)); // Termination pattern
 
     size_t contentOffset = 0;
 
-    // Encode into the file header unknown2
     contentOffset += writeMessage(fileHeader.unknown2, sizeof(fileHeader.unknown2), contentToEncode, contentOffset);
 
-    // Write the modified file header to the output file
     outputFile.write(reinterpret_cast<const char*>(&fileHeader), sizeof(fileHeader));
 
-    // Get the total number of chunks from the file header
     uint16_t totalChunks = fileHeader.numberOfChunks;
 
     for (uint16_t chunkIndex = 0; chunkIndex < totalChunks; ++chunkIndex) {
@@ -165,7 +157,7 @@ static void encodeContent(const std::string& inputPath, const std::string& outpu
         if (std::find(skipChunks.begin(), skipChunks.end(), chunkIndex) != skipChunks.end()) {
             outputFile.write(reinterpret_cast<const char*>(&chunkHeader), sizeof(chunkHeader));
 
-            // Copy the remaining chunk data
+            // Copy the remaining chunk data of skipped chunks
             const size_t chunkDataSize = 65536 - sizeof(chunkHeader); // Chunk size - header size
             std::vector<char> chunkData(chunkDataSize);
             inputFile.read(chunkData.data(), chunkDataSize);
@@ -187,16 +179,16 @@ static void encodeContent(const std::string& inputPath, const std::string& outpu
         // Only recalculate the checksum and write the header if changes were made
         if (contentOffset > 0) {
             std::vector<uint8_t> headerData(512);
-            std::memcpy(headerData.data(), &chunkHeader, 124); // Bytes from 0 to 123
-            std::memcpy(headerData.data() + 124, reinterpret_cast<uint8_t*>(&chunkHeader) + 128, 384); // Bytes from 128 to 511
+            std::memcpy(headerData.data(), &chunkHeader, 124); // unknown1
+            std::memcpy(headerData.data() + 124, reinterpret_cast<uint8_t*>(&chunkHeader) + 128, 384); // CommonStringOffsets and TemplatePtr
             chunkHeader.headerChecksum = calculateCRC32(headerData.data(), 512);
 
             outputFile.seekp(chunkOffset, std::ios::beg);
             outputFile.write(reinterpret_cast<const char*>(&chunkHeader), sizeof(chunkHeader));
         }
 
-        // Copy the remaining chunk data (event records and other fields)
-        const size_t chunkDataSize = 65536 - sizeof(chunkHeader); // Chunk size - header size
+        // Copy the remaining chunk data (event records and other fields) - Unused space
+        const size_t chunkDataSize = 65536 - sizeof(chunkHeader);
         std::vector<char> chunkData(chunkDataSize);
         inputFile.read(chunkData.data(), chunkDataSize);
         outputFile.write(chunkData.data(), chunkDataSize);
@@ -213,19 +205,18 @@ static void encodeContent(const std::string& inputPath, const std::string& outpu
     std::cout << "The content has been successfully encoded and saved to: " << outputPath << std::endl;
 }
 
-
+// Function to decode content from .evtx file
 void decodeContent(const std::string& inputPath, bool toFile, const std::string& outputFilePath = "") {
     const uint8_t terminationPattern[16] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF };
     const uint16_t startMarker = 0xFEED;
 
-    // Open the input file
+    // Input file
     std::ifstream inputFile(inputPath, std::ios::binary);
     if (!inputFile) {
         std::cerr << "Error: Could not open the input file: " << inputPath << std::endl;
         return;
     }
 
-    // Read the file header
     EVTXFileHeader fileHeader;
     inputFile.read(reinterpret_cast<char*>(&fileHeader), sizeof(fileHeader));
 
@@ -238,14 +229,14 @@ void decodeContent(const std::string& inputPath, bool toFile, const std::string&
     while (i < sizeof(fileHeader.unknown2)) {
         uint16_t chunk = fileHeader.unknown2[i] | (fileHeader.unknown2[i + 1] << 8);
         if (chunk == 0xFFFF) {
-            i += 2; // Skip the end marker
+            i += 2;
             break;
         }
         skipChunks.push_back(chunk);
         i += 2;
     }
 
-    // Ensure the start marker is present
+    // Ensure the start marker is present (0xFEED)
     uint16_t marker = fileHeader.unknown2[i] | (fileHeader.unknown2[i + 1] << 8);
     if (marker != startMarker) {
         std::cerr << "Error: Start marker not found in file header." << std::endl;
@@ -311,7 +302,6 @@ void decodeContent(const std::string& inputPath, bool toFile, const std::string&
     }
 
 OUTPUT:
-    // Output content
     if (toFile && !outputFilePath.empty()) {
         std::ofstream outputFile(outputFilePath, std::ios::binary);
         if (!outputFile) {
@@ -330,6 +320,7 @@ OUTPUT:
     inputFile.close();
 }
 
+// Calculate free space for -S flag
 size_t calculateFreeSpace(const std::string& inputPath) {
     // Open the input file
     std::ifstream inputFile(inputPath, std::ios::binary);
@@ -338,7 +329,6 @@ size_t calculateFreeSpace(const std::string& inputPath) {
         return 0;
     }
 
-    // Read the file header
     EVTXFileHeader fileHeader;
     inputFile.read(reinterpret_cast<char*>(&fileHeader), sizeof(fileHeader));
 
@@ -350,7 +340,7 @@ size_t calculateFreeSpace(const std::string& inputPath) {
 
     // Calculate modifiable space in each chunk
     for (uint16_t chunkIndex = 0; chunkIndex < totalChunks; ++chunkIndex) {
-        uint64_t chunkOffset = 4096 + chunkIndex * 65536; // Chunk offset
+        uint64_t chunkOffset = 4096 + chunkIndex * 65536;
         inputFile.seekg(chunkOffset, std::ios::beg);
 
         EVTXChunkHeader chunkHeader;
@@ -432,7 +422,7 @@ void printUsage(const char* programName) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) { // Minimum arguments for any operation
+    if (argc < 2) {
         printUsage(argv[0]);
         return 1;
     }

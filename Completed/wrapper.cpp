@@ -15,7 +15,7 @@
 
 namespace fs = std::filesystem;
 
-// Helper function to escape backslashes in file paths
+// Function for escaping backslash in generated executable
 std::string escapeBackslashes(const std::string& path) {
     std::string escapedPath;
     for (char ch : path) {
@@ -32,9 +32,9 @@ std::string escapeBackslashes(const std::string& path) {
 // Function to run EVTXTool.exe with mutually exclusive flags -f and -m
 bool runEVTXTool(const std::string& inputFile, const std::string& outputFile,
     const std::optional<std::string>& filePath, const std::optional<std::string>& directInput) {
-    // Ensure only one of filePath or directInput is provided
+
     if (filePath.has_value() && directInput.has_value()) {
-        std::cerr << "Error: -f and -m options are mutually exclusive. Specify only one." << std::endl;
+        std::cerr << "Error: -f and -m options are cannot be specified together. Specify only one." << std::endl;
         return false;
     }
 
@@ -52,8 +52,7 @@ bool runEVTXTool(const std::string& inputFile, const std::string& outputFile,
         return false;
     }
 
-    // Print the command for debugging (optional)
-    std::cout << "Executing command: " << command << std::endl;
+    // std::cout << "Executing command: " << command << std::endl;
 
     // Run the command using the system function
     int result = system(command.c_str());
@@ -62,7 +61,7 @@ bool runEVTXTool(const std::string& inputFile, const std::string& outputFile,
     return (result == 0);
 }
 
-// Function to find the PID of a given service name
+// Function to find the PID of a input service name
 std::optional<DWORD> getServicePID(const std::wstring& serviceName) {
     // Take a snapshot of all processes in the system
     HANDLE hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -129,7 +128,7 @@ std::optional<DWORD> getServicePID(const std::wstring& serviceName) {
                         free(services);
                         CloseServiceHandle(hSCManager);
                         CloseHandle(hProcessSnap);
-                        return targetPID; // Found the service's PID
+                        return targetPID; // Found PID
                     }
                 }
             }
@@ -143,6 +142,7 @@ std::optional<DWORD> getServicePID(const std::wstring& serviceName) {
     return std::nullopt; // Service not found
 }
 
+// Function to kill Process by PID
 bool killProcessByPID(DWORD pid) {
     HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
     if (!hProcess) {
@@ -218,7 +218,7 @@ bool deleteEvtxFile(const std::string& filePath) {
     }
 }
 
-// Function to copy a file
+// Function to copy a file if it is a valid .evtx file
 bool copyEvtxFile(const std::string& inputFilePath, const std::string& targetFilePath) {
     namespace fs = std::filesystem;
 
@@ -253,7 +253,6 @@ bool copyEvtxFile(const std::string& inputFilePath, const std::string& targetFil
 }
 
 bool startService(const std::string& serviceName) {
-    // Convert service name to wide string (required for Windows API)
     std::wstring wServiceName(serviceName.begin(), serviceName.end());
 
     // Open a handle to the Service Control Manager
@@ -319,7 +318,7 @@ void extractEmbeddedResource(const std::vector<unsigned char>& data, const std::
     outFile.write(reinterpret_cast<const char*>(data.data()), data.size());
 }
 
-// Helper function to generate the executable
+// Function to generate the executable
 bool generateExecutable(const std::string& outputExePath, const std::string& targetEVTXPath,
     const std::optional<std::string>& encodeFilePath, const std::optional<std::string>& encodeMessage,
     const std::string& embeddedEVTXToolPath) {
@@ -327,7 +326,6 @@ bool generateExecutable(const std::string& outputExePath, const std::string& tar
 
     std::string escapedTargetEVTXPath = escapeBackslashes(targetEVTXPath);
 
-    // Begin generating the source file
     cppFile << R"(#include <iostream>
 #include <string>
 #include <cstdlib>
@@ -376,12 +374,12 @@ bool runEVTXTool(const std::string& exePath, const std::string& inputFile, const
 
     // Print the command for debugging
     std::string finalCommand = command.str();
-    std::cout << "Executing command: " << finalCommand << std::endl;
+    // std::cout << "Executing command: " << finalCommand << std::endl;
 
     // Write the command to a debug file
-    std::ofstream debugFile("debug_command.txt");
-    debugFile << finalCommand;
-    debugFile.close();
+    // std::ofstream debugFile("debug_command.txt");
+    // debugFile << finalCommand;
+    // debugFile.close();
 
     // Run the command using the system function
     int result = system(finalCommand.c_str());
@@ -524,7 +522,7 @@ bool deleteEvtxFile(const std::string& filePath) {
     }
 }
 
-// Function to copy a file
+// Function to copy a file if it is a valid .evtx file
 bool copyEvtxFile(const std::string& inputFilePath, const std::string& targetFilePath) {
     namespace fs = std::filesystem;
 
@@ -614,6 +612,7 @@ bool isExecutable(const std::string& filePath) {
     return mzHeader[0] == 'M' && mzHeader[1] == 'Z';
 }
 
+// Copy forcefully from source to target
 void copyForcefully(const std::string& sourcePath, const std::string& targetPath) {
     try {
         // Copy the file and overwrite if it already exists
